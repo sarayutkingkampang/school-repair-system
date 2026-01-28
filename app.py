@@ -8,7 +8,7 @@ from PIL import Image
 import io
 import base64
 import time
-import json # เพิ่มตัวนี้มาเพื่ออ่าน Secrets
+import json
 
 # --- ตั้งค่า Path ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -16,8 +16,7 @@ CREDS_PATH = os.path.join(BASE_DIR, 'credentials.json')
 LOGO_PATH = os.path.join(BASE_DIR, 'logo.png')
 SHEET_NAME = "RepairData"
 
-# ================= ฟังก์ชันช่วยเหลือต่างๆ =================
-
+# --- ฟังก์ชันจัดการรูปภาพ ---
 def process_image(image_file):
     if image_file is None: return ""
     try:
@@ -35,27 +34,25 @@ def base64_to_image(base64_string):
         return Image.open(io.BytesIO(img_data))
     except: return None
 
-# --- เชื่อมต่อ Google Sheets (ฉบับอัปเกรด: รองรับ Secrets) ---
+# --- เชื่อมต่อ Google Sheets (ฉบับอัปเกรดล่าสุด) ---
 def connect_google_sheet():
-    # กำหนด Scope
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     
     try:
-        # 1. ลองเช็คว่ามี Secrets บนเว็บไหม (วิธีไม้ตาย)
-        if 'key_text' in st.secrets:
-            # แปลงข้อความใน Secrets กลับเป็น Dictionary
-            key_dict = json.loads(st.secrets['key_text'])
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(key_dict, scope)
+        # 1. เช็คว่ามี Secrets บนเว็บไหม (แบบใหม่: เช็ค key โดยตรง)
+        if 'type' in st.secrets and 'private_key' in st.secrets:
+            # แปลง st.secrets ให้เป็น Dictionary ปกติ
+            creds_dict = dict(st.secrets)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             
-        # 2. ถ้าไม่มี Secrets ให้หาไฟล์ credentials.json ในเครื่อง (วิธีเดิม)
+        # 2. ถ้าไม่มี Secrets ให้หาไฟล์ในเครื่อง (สำหรับรันในคอมตัวเอง)
         elif os.path.exists(CREDS_PATH):
             creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_PATH, scope)
             
         else:
-            st.error("❌ ไม่พบกุญแจ (ทั้งแบบไฟล์และ Secrets)")
+            st.error("❌ ไม่พบกุญแจเชื่อมต่อ (Credentials not found)")
             return None
 
-        # เชื่อมต่อ
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME).sheet1
         
@@ -121,11 +118,12 @@ st.set_page_config(page_title="ระบบแจ้งซ่อม - ร.น.�
 
 col_logo, col_title = st.columns([1, 5])
 with col_logo:
+    # พยายามโหลดโลโก้ ถ้าไม่เจอก็ข้ามไป
     if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, width=120)
     else:
-        # กรณีหาโลโก้ไม่เจอ (เช่นบนเว็บ) ให้ข้ามไป ไม่ต้อง Error
         st.write("") 
+
 with col_title:
     st.title("ระบบแจ้งซ่อมงานอาคาร")
     st.subheader("โรงเรียนราชนันทาจารย์ สามเสนวิทยาลัย ๒")
