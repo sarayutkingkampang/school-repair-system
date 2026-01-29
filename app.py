@@ -8,14 +8,14 @@ from PIL import Image
 import io
 import base64
 import time
-import json # ต้อง import json เผื่อไว้
+import json
 
 # --- ตั้งค่า ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CREDS_FILE = os.path.join(BASE_DIR, 'credentials.json')
 SHEET_NAME = "RepairData"
 
-# --- ฟังก์ชันจัดการรูปภาพ ---
+# --- ฟังก์ชันรูปภาพ ---
 def get_logo_image():
     possible_names = ['Logo_ss2.jpg', 'logo.png', 'logo.jpg']
     for name in possible_names:
@@ -24,14 +24,37 @@ def get_logo_image():
     return None
 
 def process_image(image_file):
+    """ฟังก์ชันบีบอัดรูป (ฉบับแก้ไข: บีบให้เล็กพอที่จะยัดลง Google Sheet ได้)"""
     if image_file is None: return ""
     try:
         img = Image.open(image_file)
-        img.thumbnail((600, 600))
+        
+        # 1. ปรับขนาดให้เล็กลง (เหลือ 400px พอ)
+        img.thumbnail((400, 400)) 
+        
+        # 2. แปลงเป็น RGB (กัน error รูป PNG)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+            
         buffered = io.BytesIO()
-        img.convert('RGB').save(buffered, format="JPEG", quality=60)
-        return base64.b64encode(buffered.getvalue()).decode()
-    except: return ""
+        # 3. ลดคุณภาพลงเหลือ 50 (เพื่อให้รหัสสั้นลง)
+        img.save(buffered, format="JPEG", quality=50)
+        
+        # 4. แปลงเป็นรหัส Base64
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        
+        # 5. เช็คความยาวก่อนส่ง (Google Sheets รับได้ประมาณ 50,000 ตัวอักษร)
+        if len(img_str) > 50000:
+            st.warning("รูปภาพมีความละเอียดสูงเกินไป ระบบจะพยายามลดขนาดลงอีก...")
+            # ถ้ายังใหญ่ไป ให้บีบอีกรอบแบบฮาร์ดคอร์
+            buffered = io.BytesIO()
+            img.save(buffered, format="JPEG", quality=30)
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            
+        return img_str
+    except Exception as e:
+        st.error(f"เกิดข้อผิดพลาดในการแปลงรูป: {e}")
+        return ""
 
 def base64_to_image(base64_string):
     try:
@@ -40,7 +63,7 @@ def base64_to_image(base64_string):
         return Image.open(io.BytesIO(img_data))
     except: return None
 
-# ================= ฟังก์ชันเชื่อมต่อ (ฉบับแก้ Error: AttrDict) =================
+# ================= ฟังก์ชันเชื่อมต่อ (แบบรองรับกุญแจใหม่) =================
 
 def connect_google_sheet():
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -48,31 +71,23 @@ def connect_google_sheet():
     try:
         creds = None
         
-        # 1. ลองอ่านจาก Secrets
         if 'google_credentials' in st.secrets:
             secret_value = st.secrets['google_credentials']
-            
-            # 🔥 จุดแก้บั๊ก: เช็คก่อนว่าเป็น "ข้อความ" หรือ "วัตถุ"
             if isinstance(secret_value, str):
-                # ถ้าเป็นข้อความ (String) ให้แปลงเป็น Dict
                 creds_dict = json.loads(secret_value)
             else:
-                # ถ้าเป็นวัตถุ (AttrDict) อยู่แล้ว ให้แปลงเป็น Dict ปกติเลย
                 creds_dict = dict(secret_value)
 
-            # กันเหนียว: แปลง \n ใน private_key ให้ถูกต้อง
             if 'private_key' in creds_dict:
                 creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
             
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 
-        # 2. (สำรอง) อ่านจากไฟล์ในเครื่อง
         if creds is None and os.path.exists(CREDS_FILE):
             creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, scope)
 
-        # 3. ถ้ายังไม่ได้
         if creds is None:
-            st.error("❌ ไม่พบกุญแจเชื่อมต่อ (เช็ค Secrets [google_credentials] หรือไฟล์ credentials.json)")
+            st.error("❌ ไม่พบกุญแจเชื่อมต่อ")
             return None
 
         client = gspread.authorize(creds)
@@ -105,9 +120,12 @@ def add_request(name, department, issue, img_str):
             new_id = len(all_records)
         except: new_id = 1
         try:
+            # เพิ่ม Row ใหม่
             sheet.append_row([new_id, timestamp, name, department, issue, 'รอคิว (Pending)', '', img_str])
             return True
-        except: pass
+        except Exception as e:
+            st.error(f"บันทึกข้อมูลไม่สำเร็จ: {e}")
+            return False
     return False
 
 def update_status(req_id, new_status, repair_note):
@@ -133,7 +151,7 @@ def delete_request(req_id):
         except: pass
     return False
 
-# ================= UI =================
+# ================= หน้าจอ UI =================
 st.set_page_config(page_title="ระบบแจ้งซ่อม - ร.น.ส.๒", layout="wide", page_icon="🛠️")
 
 col_logo, col_title = st.columns([1, 5])
@@ -159,16 +177,19 @@ with tab1:
             issue = st.text_area("อาการเสีย")
             uploaded_file = st.file_uploader("แนบรูป (ถ้ามี)", type=['jpg', 'png', 'jpeg'])
         
-        if st.form_submit_button("ส่งข้อมูล", type="primary"):
+        submitted = st.form_submit_button("ส่งแจ้งซ่อม", type="primary")
+        
+        if submitted:
             if name and issue:
-                with st.spinner("กำลังส่ง..."):
+                with st.spinner("กำลังย่อรูปและบันทึกข้อมูล..."):
                     img_str = process_image(uploaded_file)
+                    
                     if add_request(name, dept, issue, img_str):
-                        st.success("บันทึกสำเร็จ!")
+                        st.success("✅ บันทึกสำเร็จ!")
                         time.sleep(1)
                         st.rerun()
             else:
-                st.warning("กรอกข้อมูลให้ครบนะครับ")
+                st.warning("⚠️ กรุณากรอกชื่อและอาการเสีย")
 
 with tab2:
     if st.button("รีเฟรช"): st.rerun()
