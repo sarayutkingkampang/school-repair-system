@@ -8,22 +8,19 @@ from PIL import Image
 import io
 import base64
 import time
-import json
+import json # ต้อง import json เผื่อไว้
 
-# --- ตั้งค่า Path ---
+# --- ตั้งค่า ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CREDS_FILE = os.path.join(BASE_DIR, 'credentials.json')
 SHEET_NAME = "RepairData"
 
-# ================= ฟังก์ชันจัดการรูปภาพ =================
-
+# --- ฟังก์ชันจัดการรูปภาพ ---
 def get_logo_image():
-    """ค้นหาไฟล์โลโก้ (รองรับหลายชื่อ)"""
-    possible_names = ['Logo_ss2.jpg', 'logo.png', 'logo.jpg', 'Logo.png']
+    possible_names = ['Logo_ss2.jpg', 'logo.png', 'logo.jpg']
     for name in possible_names:
         path = os.path.join(BASE_DIR, name)
-        if os.path.exists(path):
-            return path
+        if os.path.exists(path): return path
     return None
 
 def process_image(image_file):
@@ -43,31 +40,46 @@ def base64_to_image(base64_string):
         return Image.open(io.BytesIO(img_data))
     except: return None
 
-# ================= ฟังก์ชันเชื่อมต่อ (ฉบับไม้ตาย 🔫) =================
+# ================= ฟังก์ชันเชื่อมต่อ (ฉบับแก้ Error: AttrDict) =================
 
 def connect_google_sheet():
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     
     try:
-        # 1. วิธีใหม่: อ่านจากก้อน JSON ใน Secrets (ชัวร์ที่สุด)
+        creds = None
+        
+        # 1. ลองอ่านจาก Secrets
         if 'google_credentials' in st.secrets:
-            # แปลงข้อความ JSON ให้กลายเป็น Dictionary (ระบบจะจัดการ \n ให้เอง)
-            creds_dict = json.loads(st.secrets['google_credentials'])
+            secret_value = st.secrets['google_credentials']
+            
+            # 🔥 จุดแก้บั๊ก: เช็คก่อนว่าเป็น "ข้อความ" หรือ "วัตถุ"
+            if isinstance(secret_value, str):
+                # ถ้าเป็นข้อความ (String) ให้แปลงเป็น Dict
+                creds_dict = json.loads(secret_value)
+            else:
+                # ถ้าเป็นวัตถุ (AttrDict) อยู่แล้ว ให้แปลงเป็น Dict ปกติเลย
+                creds_dict = dict(secret_value)
+
+            # กันเหนียว: แปลง \n ใน private_key ให้ถูกต้อง
+            if 'private_key' in creds_dict:
+                creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
+            
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-            
-        # 2. วิธีสำรอง: อ่านจากไฟล์ในเครื่อง (สำหรับรัน Local)
-        elif os.path.exists(CREDS_FILE):
+
+        # 2. (สำรอง) อ่านจากไฟล์ในเครื่อง
+        if creds is None and os.path.exists(CREDS_FILE):
             creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, scope)
-            
-        else:
-            st.error("❌ ไม่พบกุญแจเชื่อมต่อ (กรุณาเช็ค Secrets หรือไฟล์ credentials.json)")
+
+        # 3. ถ้ายังไม่ได้
+        if creds is None:
+            st.error("❌ ไม่พบกุญแจเชื่อมต่อ (เช็ค Secrets [google_credentials] หรือไฟล์ credentials.json)")
             return None
 
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME).sheet1
         
     except Exception as e:
-        st.error(f"❌ เชื่อมต่อ Sheets ไม่ได้: {e}")
+        st.error(f"❌ เชื่อมต่อ Google Sheets ไม่ได้: {e}")
         return None
 
 # ================= ฟังก์ชันจัดการข้อมูล =================
@@ -121,18 +133,13 @@ def delete_request(req_id):
         except: pass
     return False
 
-# ================= หน้าจอโปรแกรม =================
-
+# ================= UI =================
 st.set_page_config(page_title="ระบบแจ้งซ่อม - ร.น.ส.๒", layout="wide", page_icon="🛠️")
 
-# --- ส่วนหัว ---
 col_logo, col_title = st.columns([1, 5])
 with col_logo:
     logo_path = get_logo_image()
-    if logo_path:
-        st.image(logo_path, width=120)
-    else:
-        st.write("*(Logo)*") 
+    if logo_path: st.image(logo_path, width=120)
 
 with col_title:
     st.title("ระบบแจ้งซ่อมงานอาคาร")
@@ -140,12 +147,10 @@ with col_title:
 
 st.divider()
 
-# --- เมนูแท็บ ---
 tab1, tab2, tab3 = st.tabs(["📝 แจ้งซ่อม", "📊 ดูคิวงาน", "🔧 Admin"])
 
 with tab1:
     with st.form("repair_form", clear_on_submit=True):
-        st.subheader("กรอกข้อมูลแจ้งซ่อม")
         c1, c2 = st.columns(2)
         with c1:
             name = st.text_input("ชื่อ-นามสกุล")
@@ -154,41 +159,35 @@ with tab1:
             issue = st.text_area("อาการเสีย")
             uploaded_file = st.file_uploader("แนบรูป (ถ้ามี)", type=['jpg', 'png', 'jpeg'])
         
-        if st.form_submit_button("ส่งแจ้งซ่อม", type="primary"):
+        if st.form_submit_button("ส่งข้อมูล", type="primary"):
             if name and issue:
-                with st.spinner("กำลังบันทึก..."):
+                with st.spinner("กำลังส่ง..."):
                     img_str = process_image(uploaded_file)
                     if add_request(name, dept, issue, img_str):
                         st.success("บันทึกสำเร็จ!")
                         time.sleep(1)
                         st.rerun()
             else:
-                st.warning("กรุณากรอกข้อมูลให้ครบ")
+                st.warning("กรอกข้อมูลให้ครบนะครับ")
 
 with tab2:
     if st.button("รีเฟรช"): st.rerun()
     df = load_data()
     if not df.empty and 'ID' in df.columns:
         df = df.sort_values(by='ID', ascending=False)
-        
         for index, row in df.iterrows():
             status = row.get('Status', 'รอคิว (Pending)')
             s_color = "red" if "รอคิว" in status else "green" if "เสร็จ" in status else "orange"
-            
-            with st.expander(f"ID: {row.get('ID','-')} | {row.get('Issue','-')} [:{s_color}[{status}]]"):
-                c1, c2 = st.columns([2, 1])
-                with c1:
-                    st.write(f"**ผู้แจ้ง:** {row.get('Name')} | **เวลา:** {row.get('Timestamp')}")
-                    st.info(f"อาการ: {row.get('Issue')}")
-                    if row.get('RepairNote'): st.success(f"ช่างตอบ: {row.get('RepairNote')}")
-                with c2:
-                    img = base64_to_image(row.get('Image', ''))
-                    if img: st.image(img, use_column_width=True)
+            with st.expander(f"ID: {row.get('ID')} | {row.get('Issue')} [:{s_color}[{status}]]"):
+                st.write(f"ผู้แจ้ง: {row.get('Name')} | เวลา: {row.get('Timestamp')}")
+                if row.get('RepairNote'): st.success(f"ช่างตอบ: {row.get('RepairNote')}")
+                img = base64_to_image(row.get('Image', ''))
+                if img: st.image(img, use_column_width=True)
     else:
         st.info("ไม่พบข้อมูล")
 
 with tab3:
-    pwd = st.text_input("รหัสผ่าน Admin", type="password")
+    pwd = st.text_input("รหัส Admin", type="password")
     if pwd == "1234":
         st.success("Login OK")
         df_admin = load_data()
@@ -196,16 +195,16 @@ with tab3:
             for i, row in df_admin.iterrows():
                 task_id = row['ID']
                 with st.container(border=True):
-                    st.markdown(f"**ID {task_id}: {row.get('Issue','-')}**")
-                    ac1, ac2 = st.columns([3, 1])
-                    with ac1:
+                    st.write(f"**ID {task_id}: {row.get('Issue')}**")
+                    c1, c2 = st.columns([3, 1])
+                    with c1:
                         with st.form(key=f"f_{task_id}"):
-                            new_status = st.selectbox("สถานะ", ["รอคิว (Pending)", "กำลังดำเนินการ", "รออะไหล่", "ซ่อมเสร็จสิ้น"], key=f"s_{task_id}")
-                            new_note = st.text_input("บันทึก", value=str(row.get('RepairNote','')), key=f"n_{task_id}")
+                            new_st = st.selectbox("สถานะ", ["รอคิว (Pending)", "กำลังดำเนินการ", "รออะไหล่", "ซ่อมเสร็จสิ้น"], key=f"s_{task_id}")
+                            new_nt = st.text_input("บันทึก", value=str(row.get('RepairNote','')), key=f"n_{task_id}")
                             if st.form_submit_button("บันทึก"):
-                                update_status(task_id, new_status, new_note)
+                                update_status(task_id, new_st, new_nt)
                                 st.rerun()
-                    with ac2:
+                    with c2:
                         with st.popover("ลบ"):
                             if st.button("ยืนยัน", key=f"d_{task_id}", type="primary"):
                                 delete_request(task_id)
