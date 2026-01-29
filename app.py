@@ -15,7 +15,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CREDS_FILE = os.path.join(BASE_DIR, 'credentials.json')
 SHEET_NAME = "RepairData"
 
-# --- ฟังก์ชันจัดการรูปภาพ (บีบอัดให้เบาหวิว) ---
+# --- ฟังก์ชันจัดการรูปภาพ ---
 def get_logo_image():
     possible_names = ['Logo_ss2.jpg', 'logo.png', 'logo.jpg']
     for name in possible_names:
@@ -23,25 +23,26 @@ def get_logo_image():
         if os.path.exists(path): return path
     return None
 
+def image_to_base64(image_path):
+    """แปลงไฟล์รูปในเครื่องเป็น Base64 สำหรับใส่ใน HTML Report"""
+    if not image_path or not os.path.exists(image_path): return ""
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode('utf-8')
+
 def process_image(image_file):
     """บีบอัดรูปให้เล็กพอที่จะเก็บใน Google Sheet"""
     if image_file is None: return ""
     try:
         img = Image.open(image_file)
-        img.thumbnail((400, 400)) # ย่อรูป
+        img.thumbnail((400, 400)) 
         if img.mode != 'RGB': img = img.convert('RGB')
-            
         buffered = io.BytesIO()
-        img.save(buffered, format="JPEG", quality=50) # ลดคุณภาพ
-        
+        img.save(buffered, format="JPEG", quality=50)
         img_str = base64.b64encode(buffered.getvalue()).decode()
-        
-        # ถ้ายังใหญ่เกิน 50k ตัวอักษร ให้บีบอีก
         if len(img_str) > 50000:
             buffered = io.BytesIO()
             img.save(buffered, format="JPEG", quality=30)
             img_str = base64.b64encode(buffered.getvalue()).decode()
-            
         return img_str
     except: return ""
 
@@ -58,27 +59,20 @@ def connect_google_sheet():
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     try:
         creds = None
-        # 1. อ่านจาก Secrets
         if 'google_credentials' in st.secrets:
             secret_value = st.secrets['google_credentials']
             if isinstance(secret_value, str):
                 creds_dict = json.loads(secret_value)
             else:
                 creds_dict = dict(secret_value)
-
             if 'private_key' in creds_dict:
                 creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
-            
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-
-        # 2. อ่านจากไฟล์ในเครื่อง
         if creds is None and os.path.exists(CREDS_FILE):
             creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, scope)
-
         if creds is None:
             st.error("❌ ไม่พบกุญแจเชื่อมต่อ")
             return None
-
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME).sheet1
     except Exception as e:
@@ -108,12 +102,9 @@ def add_request(name, department, issue, img_str):
             new_id = len(all_records)
         except: new_id = 1
         try:
-            # เพิ่ม Row ใหม่ (Column I ไว้เก็บรูปหลังซ่อม)
             sheet.append_row([new_id, timestamp, name, department, issue, 'รอคิว (Pending)', '', img_str, ''])
             return True
-        except Exception as e:
-            st.error(f"Error: {e}")
-            return False
+        except: return False
     return False
 
 def update_status(req_id, new_status, repair_note, after_repair_img_str=None):
@@ -122,12 +113,8 @@ def update_status(req_id, new_status, repair_note, after_repair_img_str=None):
         try:
             cell = sheet.find(str(req_id))
             if cell:
-                # อัปเดตสถานะ (Col F)
                 sheet.update_cell(cell.row, 6, new_status)
-                # อัปเดตบันทึก (Col G)
                 sheet.update_cell(cell.row, 7, repair_note)
-                
-                # ถ้ามีรูปหลังซ่อมส่งมา ให้บันทึกใน Col I (ช่องที่ 9)
                 if after_repair_img_str:
                     sheet.update_cell(cell.row, 9, after_repair_img_str)
                 return True
@@ -144,6 +131,81 @@ def delete_request(req_id):
                 return True
         except: pass
     return False
+
+# ================= ฟังก์ชันสร้างรายงาน HTML =================
+def generate_html_report(df_report):
+    """สร้างโค้ด HTML สำหรับพิมพ์รายงาน"""
+    logo_path = get_logo_image()
+    logo_base64 = image_to_base64(logo_path)
+    
+    # สร้างตาราง HTML
+    table_rows = ""
+    for index, row in df_report.iterrows():
+        status_color = "black"
+        if "รอคิว" in row['Status']: status_color = "#d9534f" # แดง
+        elif "เสร็จ" in row['Status']: status_color = "#5cb85c" # เขียว
+        
+        table_rows += f"""
+        <tr>
+            <td>{row['ID']}</td>
+            <td>{row['Timestamp']}</td>
+            <td>{row['Name']}</td>
+            <td>{row['Department']}</td>
+            <td>{row['Issue']}</td>
+            <td style="color:{status_color}; font-weight:bold;">{row['Status']}</td>
+            <td>{row['RepairNote']}</td>
+        </tr>
+        """
+
+    # HTML Template (จัดหน้ากระดาษ A4)
+    html_code = f"""
+    <div style="font-family: 'Sarabun', sans-serif; padding: 20px; border: 1px solid #ddd; background-color: white;">
+        <div style="display: flex; align-items: center; margin-bottom: 20px;">
+            <img src="data:image/jpeg;base64,{logo_base64}" style="width: 80px; height: auto; margin-right: 20px;">
+            <div>
+                <h2 style="margin: 0;">รายงานการแจ้งซ่อมงานอาคารสถานที่</h2>
+                <h4 style="margin: 5px 0;">โรงเรียนราชนันทาจารย์ สามเสนวิทยาลัย ๒</h4>
+                <p style="font-size: 14px; color: gray;">พิมพ์เมื่อ: {datetime.now().strftime("%d/%m/%Y %H:%M")}</p>
+            </div>
+        </div>
+
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+            <thead>
+                <tr style="background-color: #f2f2f2;">
+                    <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">ID</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">วันที่แจ้ง</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">ผู้แจ้ง</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">หน่วยงาน</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">อาการเสีย</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">สถานะ</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">บันทึกช่าง</th>
+                </tr>
+            </thead>
+            <tbody>
+                {table_rows}
+            </tbody>
+        </table>
+
+        <div style="display: flex; justify-content: space-between; margin-top: 50px; text-align: center;">
+            <div style="width: 30%;">
+                <p>ลงชื่อ .......................................................</p>
+                <p>(.......................................................)</p>
+                <p>ผู้รายงาน</p>
+            </div>
+            <div style="width: 30%;">
+                <p>ลงชื่อ .......................................................</p>
+                <p>(.......................................................)</p>
+                <p>หัวหน้างานอาคารสถานที่</p>
+            </div>
+            <div style="width: 30%;">
+                <p>ลงชื่อ .......................................................</p>
+                <p>(.......................................................)</p>
+                <p>ผู้อำนวยการโรงเรียน</p>
+            </div>
+        </div>
+    </div>
+    """
+    return html_code
 
 # ================= หน้าจอ UI =================
 st.set_page_config(page_title="ระบบแจ้งซ่อม - ร.น.ส.๒", layout="wide", page_icon="🛠️")
@@ -167,24 +229,22 @@ with tab1:
         c1, c2 = st.columns(2)
         with c1:
             name = st.text_input("ชื่อ-นามสกุล ผู้แจ้ง")
-            # เปลี่ยนกลับเป็นช่องพิมพ์เอง (Text Input)
             dept = st.text_input("กลุ่มสาระ / แผนกงาน / ห้อง") 
         with c2:
             issue = st.text_area("อาการเสีย / รายละเอียด")
-            uploaded_file = st.file_uploader("รูปภาพจุดที่เสีย (ถ้ามี)", type=['jpg', 'png', 'jpeg'])
+            uploaded_file = st.file_uploader("รูปภาพ (ถ้ามี)", type=['jpg', 'png', 'jpeg'])
         
         submitted = st.form_submit_button("🚀 ส่งแจ้งซ่อม", type="primary")
-        
         if submitted:
             if name and issue:
-                with st.spinner("กำลังส่งข้อมูล..."):
+                with st.spinner("กำลังบันทึก..."):
                     img_str = process_image(uploaded_file)
                     if add_request(name, dept, issue, img_str):
                         st.success("✅ บันทึกสำเร็จ!")
                         time.sleep(1)
                         st.rerun()
             else:
-                st.warning("⚠️ กรุณากรอกชื่อและรายละเอียดอาการเสีย")
+                st.warning("⚠️ กรุณากรอกข้อมูลให้ครบ")
 
 # --- TAB 2: ดูคิวงาน ---
 with tab2:
@@ -195,47 +255,24 @@ with tab2:
         for index, row in df.iterrows():
             status = row.get('Status', 'รอคิว (Pending)')
             s_color = "red" if "รอคิว" in status else "green" if "เสร็จ" in status else "orange"
-            
-            # หัวข้อ Expander
             with st.expander(f"ID: {row.get('ID')} | {row.get('Issue')} [:{s_color}[{status}]]"):
                 c1, c2 = st.columns([1, 1])
-                
                 with c1:
-                    st.markdown("#### 📋 รายละเอียด")
-                    st.write(f"**ผู้แจ้ง:** {row.get('Name')}")
-                    st.write(f"**หน่วยงาน:** {row.get('Department')}")
+                    st.write(f"**ผู้แจ้ง:** {row.get('Name')} ({row.get('Department')})")
                     st.write(f"**เวลา:** {row.get('Timestamp')}")
-                    st.info(f"**อาการ:** {row.get('Issue')}")
-                    
-                    if row.get('RepairNote'): 
-                        st.success(f"**👨‍🔧 ช่างบันทึก:** {row.get('RepairNote')}")
-
+                    st.info(f"อาการ: {row.get('Issue')}")
+                    if row.get('RepairNote'): st.success(f"ช่างตอบ: {row.get('RepairNote')}")
                 with c2:
-                    st.markdown("#### 🖼️ รูปภาพ")
-                    # แสดงรูป ก่อนซ่อม vs หลังซ่อม
                     img_before = base64_to_image(row.get('Image', ''))
-                    # ลองดึงรูปหลังซ่อม (Column I ซึ่งใน DataFrame อาจชื่อไม่มี header หรือเป็น index)
-                    try:
-                        # ใน pandas ถ้าอ่าน sheet มา คอลัมน์ที่ 9 อาจจะชื่อว่างๆ หรือ 'Unnamed: 8'
-                        # เราจะลองหา key ที่เป็นค่า img string
-                        cols = df.columns.tolist()
-                        img_after_str = row.iloc[8] if len(row) > 8 else ""
+                    try: img_after_str = row.iloc[8] if len(row) > 8 else ""
                     except: img_after_str = ""
-
                     img_after = base64_to_image(str(img_after_str))
-
+                    
                     ic1, ic2 = st.columns(2)
                     with ic1:
-                        if img_before: 
-                            st.image(img_before, caption="ก่อนซ่อม", use_column_width=True)
-                        else:
-                            st.write("*(ไม่มีรูปก่อนซ่อม)*")
+                        if img_before: st.image(img_before, caption="ก่อนซ่อม", use_column_width=True)
                     with ic2:
-                        if img_after:
-                            st.image(img_after, caption="✅ หลังซ่อม", use_column_width=True)
-                        elif "เสร็จ" in status:
-                            st.write("*(ไม่มีรูปหลังซ่อม)*")
-
+                        if img_after: st.image(img_after, caption="หลังซ่อม", use_column_width=True)
     else:
         st.info("ไม่พบข้อมูล")
 
@@ -245,42 +282,53 @@ with tab3:
     if pwd == "1234":
         st.success("Login OK")
         df_admin = load_data()
+        
+        # --- ส่วนจัดการงาน ---
+        st.subheader("🛠️ จัดการงานซ่อม")
         if not df_admin.empty:
             for i, row in df_admin.iterrows():
                 task_id = row['ID']
                 with st.container(border=True):
-                    st.write(f"**ID {task_id}: {row.get('Issue')}** ({row.get('Department')})")
-                    
+                    st.write(f"**ID {task_id}: {row.get('Issue')}**")
                     c1, c2 = st.columns([3, 1])
                     with c1:
                         with st.form(key=f"f_{task_id}"):
-                            col_s, col_n = st.columns(2)
-                            with col_s:
-                                st_opts = ["รอคิว (Pending)", "กำลังดำเนินการ", "รออะไหล่", "ซ่อมเสร็จสิ้น"]
-                                try: idx = st_opts.index(row.get('Status'))
-                                except: idx = 0
-                                new_st = st.selectbox("สถานะ", st_opts, index=idx, key=f"s_{task_id}")
-                            with col_n:
-                                new_nt = st.text_input("บันทึกการซ่อม", value=str(row.get('RepairNote','')), key=f"n_{task_id}")
-                            
-                            # เพิ่มช่องอัปโหลดรูปหลังซ่อม
-                            st.write("📸 **อัปโหลดรูปงานที่เสร็จแล้ว (ถ้ามี):**")
-                            admin_file = st.file_uploader("", type=['jpg','png'], key=f"u_{task_id}")
-                            
-                            if st.form_submit_button("💾 บันทึกการเปลี่ยนแปลง"):
-                                with st.spinner("กำลังบันทึก..."):
-                                    # แปลงรูปหลังซ่อม (ถ้ามี)
-                                    after_img_str = process_image(admin_file) if admin_file else None
-                                    
-                                    update_status(task_id, new_st, new_nt, after_img_str)
-                                    st.success("เรียบร้อย!")
-                                    time.sleep(1)
-                                    st.rerun()
+                            new_st = st.selectbox("สถานะ", ["รอคิว (Pending)", "กำลังดำเนินการ", "รออะไหล่", "ซ่อมเสร็จสิ้น"], key=f"s_{task_id}")
+                            new_nt = st.text_input("บันทึก", value=str(row.get('RepairNote','')), key=f"n_{task_id}")
+                            admin_file = st.file_uploader("รูปหลังซ่อม", type=['jpg','png'], key=f"u_{task_id}")
+                            if st.form_submit_button("บันทึก"):
+                                after_img = process_image(admin_file) if admin_file else None
+                                update_status(task_id, new_st, new_nt, after_img)
+                                st.rerun()
                     with c2:
-                        st.write("")
-                        st.write("")
-                        st.write("")
-                        with st.popover("🗑️ ลบ"):
-                            if st.button("ยืนยัน", key=f"d_{task_id}", type="primary"):
+                        with st.popover("ลบ"):
+                            if st.button("ยืนยัน", key=f"d_{task_id}"):
                                 delete_request(task_id)
                                 st.rerun()
+
+        st.divider()
+        
+        # --- ส่วนออกรายงาน ---
+        st.subheader("🖨️ ออกรายงาน (Print Report)")
+        
+        # ตัวเลือกกรองข้อมูล
+        filter_status = st.selectbox("เลือกประเภทงานที่จะพิมพ์", ["ทั้งหมด", "ซ่อมเสร็จสิ้น", "รอคิว/กำลังดำเนินการ"])
+        
+        if st.button("📄 สร้างรายงาน"):
+            # กรองข้อมูล
+            if filter_status == "ซ่อมเสร็จสิ้น":
+                df_print = df_admin[df_admin['Status'] == "ซ่อมเสร็จสิ้น"]
+            elif filter_status == "รอคิว/กำลังดำเนินการ":
+                df_print = df_admin[df_admin['Status'] != "ซ่อมเสร็จสิ้น"]
+            else:
+                df_print = df_admin
+
+            if not df_print.empty:
+                # สร้าง HTML Report
+                html_report = generate_html_report(df_print)
+                
+                # แสดงผล Report
+                st.markdown(html_report, unsafe_allow_html=True)
+                st.info("💡 วิธีพิมพ์: คลิกขวาที่รายงาน -> เลือก Print (หรือกด Ctrl+P)")
+            else:
+                st.warning("ไม่มีข้อมูลตามเงื่อนไขที่เลือก")
