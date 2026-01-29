@@ -23,11 +23,6 @@ def get_logo_image():
         if os.path.exists(path): return path
     return None
 
-def image_to_base64(image_path):
-    if not image_path or not os.path.exists(image_path): return ""
-    with open(image_path, "rb") as img_file:
-        return base64.b64encode(img_file.read()).decode('utf-8')
-
 def process_image(image_file):
     if image_file is None: return ""
     try:
@@ -128,80 +123,6 @@ def delete_request(req_id):
         except: pass
     return False
 
-# ================= ฟังก์ชันสร้างรายงาน HTML (แก้ไขแล้ว) =================
-def generate_html_report(df_report):
-    logo_path = get_logo_image()
-    logo_base64 = image_to_base64(logo_path)
-    
-    # สร้างแถวตาราง
-    table_rows = ""
-    for index, row in df_report.iterrows():
-        status_color = "black"
-        if "รอคิว" in row['Status']: status_color = "#d9534f"
-        elif "เสร็จ" in row['Status']: status_color = "#5cb85c"
-        
-        # ใช้ \ เพื่อต่อบรรทัด แต่ไม่ให้มีเว้นวรรคตอนแสดงผล
-        table_rows += f"""
-        <tr>
-            <td style="border: 1px solid #ddd; padding: 8px;">{row['ID']}</td>
-            <td style="border: 1px solid #ddd; padding: 8px;">{row['Timestamp']}</td>
-            <td style="border: 1px solid #ddd; padding: 8px;">{row['Name']}</td>
-            <td style="border: 1px solid #ddd; padding: 8px;">{row['Department']}</td>
-            <td style="border: 1px solid #ddd; padding: 8px;">{row['Issue']}</td>
-            <td style="border: 1px solid #ddd; padding: 8px; color:{status_color}; font-weight:bold;">{row['Status']}</td>
-            <td style="border: 1px solid #ddd; padding: 8px;">{row['RepairNote']}</td>
-        </tr>"""
-
-    # HTML Template (ชิดซ้ายสุด เพื่อแก้ปัญหาแสดงเป็น Code)
-    html_code = f"""
-<div style="font-family: 'Sarabun', sans-serif; padding: 40px; background-color: white; color: black;">
-    <div style="display: flex; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 10px;">
-        <img src="data:image/jpeg;base64,{logo_base64}" style="width: 80px; height: auto; margin-right: 20px;">
-        <div>
-            <h2 style="margin: 0; font-size: 24px;">รายงานการแจ้งซ่อมงานอาคารสถานที่</h2>
-            <h3 style="margin: 5px 0; font-size: 18px;">โรงเรียนราชนันทาจารย์ สามเสนวิทยาลัย ๒</h3>
-            <p style="font-size: 14px; color: gray; margin: 0;">พิมพ์เมื่อ: {datetime.now().strftime("%d/%m/%Y %H:%M")}</p>
-        </div>
-    </div>
-
-    <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 14px;">
-        <thead>
-            <tr style="background-color: #f2f2f2;">
-                <th style="border: 1px solid #333; padding: 10px; text-align: left; width: 5%;">ID</th>
-                <th style="border: 1px solid #333; padding: 10px; text-align: left; width: 15%;">วัน-เวลา</th>
-                <th style="border: 1px solid #333; padding: 10px; text-align: left; width: 15%;">ผู้แจ้ง</th>
-                <th style="border: 1px solid #333; padding: 10px; text-align: left; width: 15%;">หน่วยงาน</th>
-                <th style="border: 1px solid #333; padding: 10px; text-align: left; width: 25%;">อาการเสีย</th>
-                <th style="border: 1px solid #333; padding: 10px; text-align: left; width: 10%;">สถานะ</th>
-                <th style="border: 1px solid #333; padding: 10px; text-align: left; width: 15%;">บันทึกช่าง</th>
-            </tr>
-        </thead>
-        <tbody>
-            {table_rows}
-        </tbody>
-    </table>
-
-    <div style="display: flex; justify-content: space-between; margin-top: 80px; text-align: center; font-size: 14px;">
-        <div style="width: 30%;">
-            <p>ลงชื่อ .......................................................</p>
-            <p>(.......................................................)</p>
-            <p>ผู้รายงาน</p>
-        </div>
-        <div style="width: 30%;">
-            <p>ลงชื่อ .......................................................</p>
-            <p>(.......................................................)</p>
-            <p>หัวหน้างานอาคารสถานที่</p>
-        </div>
-        <div style="width: 30%;">
-            <p>ลงชื่อ .......................................................</p>
-            <p>(.......................................................)</p>
-            <p>ผู้อำนวยการโรงเรียน</p>
-        </div>
-    </div>
-</div>
-"""
-    return html_code
-
 # ================= UI =================
 st.set_page_config(page_title="ระบบแจ้งซ่อม - ร.น.ส.๒", layout="wide", page_icon="🛠️")
 
@@ -218,7 +139,7 @@ st.divider()
 
 tab1, tab2, tab3 = st.tabs(["📝 แจ้งซ่อม", "📊 ดูคิวงาน", "🔧 Admin"])
 
-# Tab 1
+# Tab 1: แจ้งซ่อม
 with tab1:
     with st.form("repair_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
@@ -241,7 +162,7 @@ with tab1:
             else:
                 st.warning("⚠️ กรุณากรอกข้อมูลให้ครบ")
 
-# Tab 2
+# Tab 2: ดูคิวงาน (แสดงทั้งหมด รวมถึงที่เสร็จแล้ว)
 with tab2:
     if st.button("🔄 รีเฟรช"): st.rerun()
     df = load_data()
@@ -271,53 +192,44 @@ with tab2:
     else:
         st.info("ไม่พบข้อมูล")
 
-# Tab 3 (Admin)
+# Tab 3: Admin (ซ่อนงานที่เสร็จแล้ว)
 with tab3:
     pwd = st.text_input("🔑 รหัสผ่าน Admin", type="password")
     if pwd == "1234":
         st.success("Login OK")
         df_admin = load_data()
         
-        st.subheader("🛠️ จัดการงานซ่อม")
-        if not df_admin.empty:
-            for i, row in df_admin.iterrows():
-                task_id = row['ID']
-                with st.container(border=True):
-                    st.write(f"**ID {task_id}: {row.get('Issue')}**")
-                    c1, c2 = st.columns([3, 1])
-                    with c1:
-                        with st.form(key=f"f_{task_id}"):
-                            new_st = st.selectbox("สถานะ", ["รอคิว (Pending)", "กำลังดำเนินการ", "รออะไหล่", "ซ่อมเสร็จสิ้น"], key=f"s_{task_id}")
-                            new_nt = st.text_input("บันทึก", value=str(row.get('RepairNote','')), key=f"n_{task_id}")
-                            admin_file = st.file_uploader("รูปหลังซ่อม", type=['jpg','png'], key=f"u_{task_id}")
-                            if st.form_submit_button("บันทึก"):
-                                after_img = process_image(admin_file) if admin_file else None
-                                update_status(task_id, new_st, new_nt, after_img)
-                                st.rerun()
-                    with c2:
-                        with st.popover("ลบ"):
-                            if st.button("ยืนยัน", key=f"d_{task_id}"):
-                                delete_request(task_id)
-                                st.rerun()
-
-        st.divider()
+        st.subheader("🛠️ รายการงานที่ต้องทำ (Pending Tasks)")
         
-        # ส่วนรายงาน
-        st.subheader("🖨️ ออกรายงาน (Print Report)")
-        filter_status = st.selectbox("เลือกประเภทงาน", ["ทั้งหมด", "ซ่อมเสร็จสิ้น", "รอคิว/กำลังดำเนินการ"])
-        
-        if st.button("📄 สร้างรายงาน"):
-            if filter_status == "ซ่อมเสร็จสิ้น":
-                df_print = df_admin[df_admin['Status'] == "ซ่อมเสร็จสิ้น"]
-            elif filter_status == "รอคิว/กำลังดำเนินการ":
-                df_print = df_admin[df_admin['Status'] != "ซ่อมเสร็จสิ้น"]
+        # --- กรองงานที่เสร็จแล้วออกไป ---
+        if not df_admin.empty and 'Status' in df_admin.columns:
+            # เลือกเฉพาะงานที่สถานะ "ไม่ใช่" ซ่อมเสร็จสิ้น
+            df_active = df_admin[df_admin['Status'] != "ซ่อมเสร็จสิ้น"]
+            
+            if not df_active.empty:
+                for i, row in df_active.iterrows():
+                    task_id = row['ID']
+                    with st.container(border=True):
+                        st.write(f"**ID {task_id}: {row.get('Issue')}**")
+                        c1, c2 = st.columns([3, 1])
+                        with c1:
+                            with st.form(key=f"f_{task_id}"):
+                                new_st = st.selectbox("สถานะ", ["รอคิว (Pending)", "กำลังดำเนินการ", "รออะไหล่", "ซ่อมเสร็จสิ้น"], key=f"s_{task_id}")
+                                new_nt = st.text_input("บันทึก", value=str(row.get('RepairNote','')), key=f"n_{task_id}")
+                                admin_file = st.file_uploader("รูปหลังซ่อม", type=['jpg','png'], key=f"u_{task_id}")
+                                
+                                if st.form_submit_button("บันทึก"):
+                                    after_img = process_image(admin_file) if admin_file else None
+                                    update_status(task_id, new_st, new_nt, after_img)
+                                    st.success(f"อัปเดตงาน ID {task_id} เรียบร้อย!")
+                                    time.sleep(1)
+                                    st.rerun() # รีโหลดหน้าจอ งานที่เสร็จจะหายไปทันที
+                        with c2:
+                            with st.popover("ลบ"):
+                                if st.button("ยืนยัน", key=f"d_{task_id}"):
+                                    delete_request(task_id)
+                                    st.rerun()
             else:
-                df_print = df_admin
-
-            if not df_print.empty:
-                html_report = generate_html_report(df_print)
-                # ตรงนี้สำคัญ: unsafe_allow_html=True จะทำให้ HTML ทำงาน
-                st.markdown(html_report, unsafe_allow_html=True)
-                st.info("💡 วิธีพิมพ์: คลิกขวาที่รายงาน -> เลือก Print (หรือกด Ctrl+P)")
-            else:
-                st.warning("ไม่มีข้อมูลตามเงื่อนไขที่เลือก")
+                st.info("🎉 ไม่มีงานค้าง! เคลียร์หมดแล้วครับ")
+        else:
+             st.info("ไม่มีข้อมูลในระบบ")
